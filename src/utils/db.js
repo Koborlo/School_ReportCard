@@ -3,8 +3,7 @@ import {
   doc, getDoc, getDocs, setDoc, deleteDoc,
   collection, query, where, onSnapshot,
   serverTimestamp, writeBatch, orderBy,
-} from "firebase/firestore";
-import { db } from "../firebase";
+} from "firebase/firestore";import { db } from "../firebase";
 
 function safeKey(...parts) {
   return parts.map(p => String(p).replace(/[^a-zA-Z0-9]/g,"_")).join("__");

@@ -58,15 +58,15 @@ function AppRoutes() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         
-        {ROUTES.teacher.map(({ path, element }) => (
+        {ROUTES.teacher.map(({ path, element: Component }) => (
           <Route key={path} path={path} element={
-            <PrivateRoute role="teacher">{element}</PrivateRoute>
+            <PrivateRoute role="teacher"><Component /></PrivateRoute>
           } />
         ))}
         
-        {ROUTES.admin.map(({ path, element }) => (
+        {ROUTES.admin.map(({ path, element: Component }) => (
           <Route key={path} path={path} element={
-            <PrivateRoute role="admin">{element}</PrivateRoute>
+            <PrivateRoute role="admin"><Component /></PrivateRoute>
           } />
         ))}
         

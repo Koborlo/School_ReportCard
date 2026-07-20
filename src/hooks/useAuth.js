@@ -5,15 +5,15 @@ import {
   signOut,
   onAuthStateChanged,
   sendPasswordResetEmail,
-  createUserWithEmailAndPassword,
 } from "firebase/auth";
-import { auth } from "../firebase";
-import { getUser, saveUser } from "../utils/db";
+import { httpsCallable } from "firebase/functions";
+import { auth, functions } from "../firebase";  // Add functions to your firebase.js
+import { getUser } from "../utils/db";
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user,    setUser]    = useState(null);
+  const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -21,8 +21,13 @@ export function AuthProvider({ children }) {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         setUser(firebaseUser);
-        const prof = await getUser(firebaseUser.uid);
-        setProfile(prof);
+        try {
+          const prof = await getUser(firebaseUser.uid);
+          setProfile(prof);
+        } catch (err) {
+          console.error("Failed to load profile:", err);
+          setProfile(null);
+        }
       } else {
         setUser(null);
         setProfile(null);
@@ -34,9 +39,18 @@ export function AuthProvider({ children }) {
 
   async function login(email, password) {
     const cred = await signInWithEmailAndPassword(auth, email, password);
-    const prof = await getUser(cred.user.uid);
-    if (!prof) throw new Error("User profile not found. Contact your administrator.");
-    return prof;
+    try {
+      const prof = await getUser(cred.user.uid);
+      if (!prof) {
+        await signOut(auth);
+        throw new Error("User profile not found. Contact your administrator.");
+      }
+      return prof;
+    } catch (err) {
+      if (err.message.includes("profile not found")) throw err;
+      await signOut(auth);
+      throw new Error("Failed to load user profile. Please try again.");
+    }
   }
 
   async function logout() {
@@ -47,22 +61,31 @@ export function AuthProvider({ children }) {
     await sendPasswordResetEmail(auth, email);
   }
 
-  // Admin-only: create a teacher account
+  // ── Cloud Function: Create Teacher (admin stays logged in) ──
   async function createTeacher(email, password, profileData) {
-    const cred = await createUserWithEmailAndPassword(auth, email, password);
-    await saveUser(cred.user.uid, {
-      email,
-      role: "teacher",
-      ...profileData,
-      createdAt: new Date().toISOString(),
-    });
-    return cred.user.uid;
+    const createTeacherFn = httpsCallable(functions, "createTeacher");
+    const result = await createTeacherFn({ email, password, profileData });
+    return result.data.uid;
+  }
+
+  // ── Cloud Function: Delete Teacher ──
+  async function deleteTeacher(uid) {
+    const deleteTeacherFn = httpsCallable(functions, "deleteTeacher");
+    await deleteTeacherFn({ uid });
+  }
+
+  // ── Cloud Function: List Teachers ──
+  async function listTeachers() {
+    const listTeachersFn = httpsCallable(functions, "listTeachers");
+    const result = await listTeachersFn();
+    return result.data.teachers;
   }
 
   return (
     <AuthContext.Provider value={{
       user, profile, loading,
-      login, logout, resetPassword, createTeacher,
+      login, logout, resetPassword,
+      createTeacher, deleteTeacher, listTeachers,
       isAdmin:   profile?.role === "admin",
       isTeacher: profile?.role === "teacher",
     }}>

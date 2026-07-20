@@ -1,6 +1,8 @@
+// src/firebase.js
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+import { getFunctions, connectFunctionsEmulator } from "firebase/functions";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCy5gO6PVtTKJA37PcT0j4lQJfuBOUKaYA",
@@ -25,4 +27,9 @@ const app = initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+export const functions = getFunctions(app);
+
+// Local emulator (uncomment for development)
+// connectFunctionsEmulator(functions, "localhost", 5001);
+
 export default app;

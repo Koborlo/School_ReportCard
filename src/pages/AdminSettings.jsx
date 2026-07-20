@@ -1,83 +1,208 @@
 // src/pages/AdminSettings.jsx
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import AppShell from "../components/shared/AppShell";
 import { useAuth } from "../hooks/useAuth";
-import { getSettings, saveSettings, saveTerm, getTerms, getActiveTerm, getSubjects, saveSubjects, getAllTeachers, saveUser, deleteUser } from "../utils/db";
+import { getSettings, saveSettings, saveTerm, getTerms, getSubjects, saveSubjects, getAllTeachers } from "../utils/db";
 import { DEFAULT_SUBJECTS, CLASSES } from "../utils/constants";
 
+const NUMERIC_FIELDS = ["days", "passmark"];
+const TABS = [
+  { key: "school", label: "School Info" },
+  { key: "terms", label: "Terms" },
+  { key: "teachers", label: "Teachers" },
+  { key: "subjects", label: "Subjects" },
+];
+
 export default function AdminSettings() {
-  const { createTeacher } = useAuth();
+  const { createTeacher, logout } = useAuth();
+  const navigate = useNavigate();
   const [tab, setTab] = useState("school");
-  const [settings, setSettings] = useState({ schoolName:"", tel:"", circuit:"", postal:"", year:"2026", term:"Term 1", days:65, passmark:50, vacDate:"", nextTermDate:"" });
-  const [teachers, setTeachers]   = useState([]);
-  const [subjects, setSubjects]   = useState([]);
-  const [terms,    setTerms]      = useState([]);
-  const [newTeacher, setNewTeacher] = useState({ name:"", email:"", password:"", subjects:[], classes:[] });
-  const [newSubject, setNewSubject]  = useState({ code:"", name:"", category:"" });
-  const [newTerm,    setNewTerm]     = useState({ id:"", term:"Term 1", year:"2026", active:true, vacDate:"", nextTermDate:"" });
+  const [loading, setLoading] = useState(true);
+
+  // Settings
+  const [settings, setSettings] = useState({
+    schoolName: "", tel: "", circuit: "", postal: "", year: "2026",
+    term: "Term 1", days: 65, passmark: 50, vacDate: "", nextTermDate: ""
+  });
+  const [originalSettings, setOriginalSettings] = useState(null);
+
+  // Data
+  const [teachers, setTeachers] = useState([]);
+  const [subjects, setSubjects] = useState([]);
+  const [terms, setTerms] = useState([]);
+
+  // Forms
+  const [newTeacher, setNewTeacher] = useState({ name: "", email: "", password: "", subjects: [], classes: [] });
+  const [newSubject, setNewSubject] = useState({ code: "", name: "", category: "" });
+  const [newTerm, setNewTerm] = useState({ id: "", term: "Term 1", year: "2026", active: true, vacDate: "", nextTermDate: "" });
+
   const [saving, setSaving] = useState(false);
+  const [subjectFilter, setSubjectFilter] = useState("");
+  const [creatingTeacher, setCreatingTeacher] = useState(false);
 
   useEffect(() => {
-    Promise.all([getSettings(), getAllTeachers(), getSubjects(), getTerms()]).then(([s,t,sub,tr])=>{
-      if(s) setSettings(s);
-      setTeachers(t.filter(u=>u.role==="teacher"));
-      setSubjects(sub || DEFAULT_SUBJECTS);
-      setTerms(tr);
-    });
+    setLoading(true);
+    Promise.all([getSettings(), getAllTeachers(), getSubjects(), getTerms()])
+      .then(([s, t, sub, tr]) => {
+        if (s) {
+          setSettings(s);
+          setOriginalSettings(s);
+        }
+        setTeachers(t.filter(u => u.role === "teacher"));
+        setSubjects(sub || DEFAULT_SUBJECTS);
+        setTerms(tr);
+      })
+      .catch(err => {
+        console.error(err);
+        toast.error("Failed to load settings");
+      })
+      .finally(() => setLoading(false));
   }, []);
 
-  async function handleSaveSettings(e) {
-    e.preventDefault(); setSaving(true);
-    try { await saveSettings(settings); toast.success("Settings saved!"); }
-    catch { toast.error("Save failed"); }
-    setSaving(false);
-  }
+  const settingsDirty = useMemo(() => 
+    JSON.stringify(settings) !== JSON.stringify(originalSettings),
+  [settings, originalSettings]);
 
-  async function handleAddTeacher(e) {
+  const handleSaveSettings = useCallback(async (e) => {
     e.preventDefault();
+    setSaving(true);
+    try {
+      await saveSettings(settings);
+      setOriginalSettings(settings);
+      toast.success("Settings saved!");
+    } catch (err) {
+      console.error(err);
+      toast.error("Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }, [settings]);
+
+  const validateTeacher = useCallback((data) => {
+    const errors = [];
+    if (!data.name.trim()) errors.push("Name is required");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) errors.push("Invalid email");
+    if (data.password.length < 6) errors.push("Password must be at least 6 characters");
+    if (data.classes.length === 0) errors.push("Select at least one class");
+    if (data.subjects.length === 0) errors.push("Select at least one subject");
+    return errors;
+  }, []);
+
+  const handleAddTeacher = useCallback(async (e) => {
+    e.preventDefault();
+    const errors = validateTeacher(newTeacher);
+    if (errors.length) {
+      errors.forEach(err => toast.error(err));
+      return;
+    }
+
+    setCreatingTeacher(true);
     try {
       await createTeacher(newTeacher.email, newTeacher.password, {
-        name: newTeacher.name, subjects: newTeacher.subjects, classes: newTeacher.classes
+        name: newTeacher.name.trim(),
+        subjects: newTeacher.subjects,
+        classes: newTeacher.classes
       });
-      toast.success(`Teacher ${newTeacher.name} created!`);
-      setNewTeacher({ name:"", email:"", password:"", subjects:[], classes:[] });
-      const t = await getAllTeachers();
-      setTeachers(t.filter(u=>u.role==="teacher"));
-    } catch(err) { toast.error(err.message); }
-  }
 
-  async function handleAddSubject(e) {
+      toast.success(`Teacher ${newTeacher.name} created! Please sign in again.`);
+      setNewTeacher({ name: "", email: "", password: "", subjects: [], classes: [] });
+
+      // Admin was logged out during teacher creation
+      // Redirect to login after brief delay
+      setTimeout(() => {
+        logout();
+        navigate("/login");
+      }, 2500);
+
+    } catch (err) {
+      toast.error(err.message || "Failed to create teacher");
+      setCreatingTeacher(false);
+    }
+  }, [newTeacher, createTeacher, validateTeacher, logout, navigate]);
+
+  const handleAddSubject = useCallback(async (e) => {
     e.preventDefault();
-    const updated = [...subjects, { code: newSubject.code.toUpperCase(), name: newSubject.name, category: newSubject.category }];
+    const code = newSubject.code.toUpperCase().trim();
+    const name = newSubject.name.trim();
+
+    if (!code || !name) {
+      toast.error("Code and name are required");
+      return;
+    }
+    if (subjects.some(s => s.code === code)) {
+      toast.error(`Subject ${code} already exists`);
+      return;
+    }
+
+    const updated = [...subjects, { code, name, category: newSubject.category }];
     await saveSubjects(updated);
     setSubjects(updated);
-    setNewSubject({ code:"", name:"", category:"" });
+    setNewSubject({ code: "", name: "", category: "" });
     toast.success("Subject added!");
-  }
+  }, [newSubject, subjects]);
 
-  async function handleActivateTerm(termId) {
-    for (const t of terms) { await saveTerm(t.id, { ...t, active: t.id === termId }); }
-    const updated = await getTerms();
-    setTerms(updated);
-    toast.success("Term activated!");
-  }
+  const handleActivateTerm = useCallback(async (termId) => {
+    const term = terms.find(t => t.id === termId);
+    const currentlyActive = terms.find(t => t.active);
 
-  async function handleCreateTerm(e) {
+    if (currentlyActive?.id === termId) return;
+
+    if (!window.confirm(
+      `Activate ${term.term} ${term.year}?${currentlyActive ? `\n\nThis will deactivate ${currentlyActive.term} ${currentlyActive.year}.` : ''}`
+    )) return;
+
+    const updates = [];
+    if (currentlyActive) {
+      updates.push(saveTerm(currentlyActive.id, { ...currentlyActive, active: false }));
+    }
+    updates.push(saveTerm(termId, { ...term, active: true }));
+
+    try {
+      await Promise.all(updates);
+      const updated = await getTerms();
+      setTerms(updated);
+      toast.success("Term activated!");
+    } catch (err) {
+      toast.error("Failed to activate term");
+      console.error(err);
+    }
+  }, [terms]);
+
+  const handleCreateTerm = useCallback(async (e) => {
     e.preventDefault();
-    const id = `${newTerm.year}-${newTerm.term.replace(/\s+/g,"")}`;
-    await saveTerm(id, { ...newTerm, id });
-    const updated = await getTerms();
-    setTerms(updated);
-    toast.success("Term created!");
-  }
+    const id = `${newTerm.year}-${newTerm.term.trim().replace(/\s+/g, "-").toLowerCase()}`;
 
-  const TABS = [
-    { key:"school",   label:"School Info"  },
-    { key:"terms",    label:"Terms"        },
-    { key:"teachers", label:"Teachers"     },
-    { key:"subjects", label:"Subjects"     },
-  ];
+    if (terms.some(t => t.id === id)) {
+      toast.error("This term already exists");
+      return;
+    }
+
+    try {
+      await saveTerm(id, { ...newTerm, id });
+      const updated = await getTerms();
+      setTerms(updated);
+      setNewTerm({ id: "", term: "Term 1", year: "2026", active: true, vacDate: "", nextTermDate: "" });
+      toast.success("Term created!");
+    } catch (err) {
+      toast.error("Failed to create term");
+      console.error(err);
+    }
+  }, [newTerm, terms]);
+
+  const filteredSubjects = useMemo(() => 
+    subjects.filter(s => 
+      s.name.toLowerCase().includes(subjectFilter.toLowerCase()) ||
+      s.code.toLowerCase().includes(subjectFilter.toLowerCase())
+    ),
+  [subjects, subjectFilter]);
+
+  if (loading) return (
+    <AppShell title="Settings">
+      <div className="loading-center"><div className="spinner" /><span>Loading settings…</span></div>
+    </AppShell>
+  );
 
   return (
     <AppShell title="Settings">
@@ -103,10 +228,17 @@ export default function AdminSettings() {
               {[["year","Academic Year"],["term","Current Term"],["days","Total School Days"],["passmark","Pass Mark (/100)"],["vacDate","Vacation Date"],["nextTermDate","Next Term Date"]].map(([k,l])=>(
                 <div className="form-group" key={k}>
                   <label className="form-label">{l}</label>
-                  <input className="form-input" value={settings[k]||""} onChange={e=>setSettings(p=>({...p,[k]:e.target.value}))} />
+                  <input 
+                    className="form-input" 
+                    type={NUMERIC_FIELDS.includes(k) ? "number" : "text"}
+                    value={settings[k]||""} 
+                    onChange={e=>setSettings(p=>({...p,[k]: NUMERIC_FIELDS.includes(k) ? Number(e.target.value) : e.target.value}))} 
+                  />
                 </div>
               ))}
-              <button className="btn btn-primary" type="submit" disabled={saving}>{saving?"Saving…":"Save Settings"}</button>
+              <button className="btn btn-primary" type="submit" disabled={saving || !settingsDirty}>
+                {saving ? "Saving…" : settingsDirty ? "Save Settings" : "Saved"}
+              </button>
             </form>
           </div>
         </div>
@@ -185,7 +317,9 @@ export default function AdminSettings() {
                     ))}
                   </div>
                 </div>
-                <button className="btn btn-primary btn-sm" type="submit">Create Teacher Account</button>
+                <button className="btn btn-primary btn-sm" type="submit" disabled={creatingTeacher}>
+                  {creatingTeacher ? "Creating… (you will be signed out)" : "Create Teacher Account"}
+                </button>
               </form>
             </div>
           </div>
@@ -228,12 +362,19 @@ export default function AdminSettings() {
           <div className="card">
             <div className="card-head"><div className="card-title">All Subjects ({subjects.length})</div></div>
             <div className="card-body">
-              {subjects.map(s=>(
+              <input
+                placeholder="Filter subjects..."
+                value={subjectFilter}
+                onChange={e => setSubjectFilter(e.target.value)}
+                style={{ marginBottom: 8, fontSize: 12, padding: "4px 8px", width: "100%", border: "1px solid var(--bdr)", borderRadius: 4 }}
+              />
+              {filteredSubjects.map(s=>(
                 <div key={s.code} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",borderBottom:"1px solid var(--bdr)",fontSize:12}}>
                   <span><b style={{color:"var(--mg)"}}>{s.code}</b> — {s.name}</span>
                   <span style={{fontSize:10,color:"var(--mut)"}}>{s.category}</span>
                 </div>
               ))}
+              {filteredSubjects.length === 0 && <p style={{fontSize:12,color:"var(--mut)"}}>No subjects match.</p>}
             </div>
           </div>
         </div>

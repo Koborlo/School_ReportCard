@@ -34,7 +34,7 @@ export default function TeacherViewMarks() {
       if (myClasses[0])        setSelCls(myClasses[0]);
       if (mySubjects[0])       setSelSubj(mySubjects[0].code);
     });
-  }, []);
+  }, [myClasses, mySubjects]);
 
   useEffect(() => {
     if (!term || !selCls || !selSubj) return;
@@ -43,8 +43,13 @@ export default function TeacherViewMarks() {
       getStudents(term.id, selCls),
       getMarks(term.id, selCls, selSubj),
     ]).then(([sts, mks]) => {
-      setStudents(sts);
-      setMarks(mks);
+      setStudents(sts || []);
+      setMarks(mks || {});
+      setLoading(false);
+    }).catch(err => {
+      console.error("Failed to load marks:", err);
+      setStudents([]);
+      setMarks({});
       setLoading(false);
     });
   }, [term, selCls, selSubj]);

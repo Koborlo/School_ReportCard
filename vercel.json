@@ -3,7 +3,6 @@
   "outputDirectory": "build",
   "framework": "create-react-app",
   "installCommand": "pnpm install",
-  "nodeVersion": "18.x",
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ]

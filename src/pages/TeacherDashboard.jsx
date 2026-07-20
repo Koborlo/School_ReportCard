@@ -3,14 +3,15 @@ import{useState,useEffect}from"react";
 import{useNavigate}from"react-router-dom";
 import AppShell from"../components/shared/AppShell";
 import{useAuth}from"../hooks/useAuth";
+import{useSubjects}from"../hooks/useSubjects";
 import{getActiveTerm,getStudents,getMarks}from"../utils/db";
-import{DEFAULT_SUBJECTS}from"../utils/constants";
 
 const CLS_LABEL={B7:"Basic 7",B8:"Basic 8",B9:"Basic 9"};
 const CLS_COLOR={B7:"var(--b7)",B8:"var(--b8)",B9:"var(--b9)"};
 
 export default function TeacherDashboard(){
   const{profile}=useAuth();
+  const{resolveSubjects}=useSubjects();
   const navigate=useNavigate();
   const[term,setTerm]=useState(null);
   const[stats,setStats]=useState({});
@@ -55,7 +56,7 @@ export default function TeacherDashboard(){
     load();
   },[profile]);
 
-  const mySubjects=(profile?.subjects||[]).map(sc=>DEFAULT_SUBJECTS.find(s=>s.code===sc)).filter(Boolean);
+  const mySubjects=resolveSubjects(profile?.subjects);
   const myClasses=profile?.classes||[];
   let tf=0,ta=0;
   myClasses.forEach(c=>mySubjects.forEach(s=>{const st=stats[c]?.[s.code];if(st){tf+=st.filled;ta+=st.total;}}));

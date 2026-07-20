@@ -2,6 +2,8 @@
   "buildCommand": "pnpm run build",
   "outputDirectory": "build",
   "framework": "create-react-app",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "nodeVersion": "18.x",
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ]

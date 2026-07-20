@@ -2,7 +2,7 @@
 import{useState,useEffect}from"react";
 import toast from"react-hot-toast";
 import AppShell from"../components/shared/AppShell";
-import{getActiveTerm,getStudents,saveStudents,deleteStudent}from"../utils/db";
+import{getActiveTerm,getStudents,saveStudents,deleteStudent,deleteAllStudents}from"../utils/db";
 import{CLASSES}from"../utils/constants";
 
 const CM={
@@ -25,6 +25,7 @@ export default function AdminStudents(){
   const[students,setStudents]=useState([]);
   const[bulk,setBulk]=useState("");
   const[loading,setLoading]=useState(false);
+  const[deleting,setDeleting]=useState(false);
   const[preview,setPreview]=useState([]);
 
   useEffect(()=>{getActiveTerm().then(setTerm);},[]);
@@ -64,15 +65,49 @@ export default function AdminStudents(){
     toast.success("Student removed");
   }
 
+  async function handleDeleteAll(){
+    if(!window.confirm(`Delete ALL ${students.length} students in ${CM[cls].label}? This cannot be undone!`))return;
+    if(!term)return;
+    setDeleting(true);
+    try{
+      const success=await deleteAllStudents(term.id,cls);
+      if(success){
+        setStudents([]);
+        toast.success("All students deleted");
+      }else{
+        toast.error("Failed to delete students");
+      }
+    }catch(err){
+      console.error("Delete error:",err);
+      toast.error("Error deleting students");
+    }finally{
+      setDeleting(false);
+    }
+  }
+
   return(
     <AppShell title="Students" termLabel={term?`${term.term} ${term.year}`:""}>
-      <div style={{display:"flex",gap:8,marginBottom:14}}>
-        {CLASSES.map(c=>(
-          <button key={c.code}
-            className={`btn btn-sm ${cls===c.code?"btn-primary":"btn-secondary"}`}
-            style={cls===c.code?{background:CM[c.code].color,borderColor:CM[c.code].color}:{}}
-            onClick={()=>setCls(c.code)}>{c.label}</button>
-        ))}
+      <div style={{display:"flex",gap:8,marginBottom:14,alignItems:"center",justifyContent:"space-between",flexWrap:"wrap"}}>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {CLASSES.map(c=>(
+            <button key={c.code}
+              className={`btn btn-sm ${cls===c.code?"btn-primary":"btn-secondary"}`}
+              style={cls===c.code?{background:CM[c.code].color,borderColor:CM[c.code].color}:{}}
+              onClick={()=>setCls(c.code)}>{c.label}</button>
+          ))}
+        </div>
+         
+        {students.length>0&&(
+          <button
+            className="btn btn-sm"
+            onClick={handleDeleteAll}
+            disabled={deleting}
+            style={{background:"#B71C1C",color:"#fff",border:"none"}}
+            title="Delete all students in this class"
+          >
+            {deleting?"Deleting…":"Delete All"}
+          </button>
+        )}
       </div>
 
       {!term&&<div className="alert alert-warn">Create an active term in Settings → Terms first.</div>}

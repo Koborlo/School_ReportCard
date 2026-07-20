@@ -47,6 +47,13 @@ export async function saveStudents(termId,classCode,students){
   await b.commit();
 }
 export async function deleteStudent(termId,classCode,studentId){await deleteDoc(studentDoc(termId,classCode,studentId));}
+export async function deleteAllStudents(termId,classCode){
+  try{const sts=await getStudents(termId,classCode);
+  const b=writeBatch(db);
+  sts.forEach(s=>b.delete(studentDoc(termId,classCode,s.id)));
+  await b.commit();
+  return true;}catch(e){console.error("deleteAllStudents:",e);return false;}
+}
 
 export async function getMarks(termId,classCode,subjectCode){
   try{const s=await getDocs(marksCol(termId,classCode,subjectCode));

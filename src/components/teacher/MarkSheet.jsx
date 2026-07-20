@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
 import toast from "react-hot-toast";
-import { subscribeMarks, saveMark, getStudents } from "../../utils/db";
+import { subscribeMarks, saveMark, getStudents, saveStudents } from "../../utils/db";
 import { calcSBATotal, calcWeightedTotal, calcGrade, TASK_MAX, GRADE_SCALE } from "../../utils/constants";
 
 // ── Sub-components ──
@@ -135,7 +135,13 @@ export default function MarkSheet({ termId, classCode, classLabel, subjectCode, 
   // Load students
   useEffect(() => {
     if (termId && classCode) {
-      getStudents(termId, classCode).then(setStudents);
+      getStudents(termId, classCode).then(sts => {
+        setStudents(sts);
+        // If no students yet, that's okay - they'll be populated by marks
+      }).catch(err => {
+        console.error("Error loading students:", err);
+        setStudents([]);
+      });
     }
   }, [termId, classCode]);
 
@@ -177,6 +183,17 @@ export default function MarkSheet({ termId, classCode, classLabel, subjectCode, 
     const markData = latestMarksRef.current[studentId];
 
     try {
+      // Auto-save student if not already saved
+      const student = students.find(s => s.id === studentId);
+      if (student && student.name) {
+        try {
+          await saveStudents(termId, classCode, [{ id: student.id, name: student.name, index: student.index || "" }]);
+        } catch (err) {
+          console.warn("Could not auto-save student:", err);
+          // Continue anyway
+        }
+      }
+      
       await saveMark(termId, classCode, subjectCode, studentId, markData);
       setRowStatus(p => ({ ...p, [studentId]: "saved" }));
 

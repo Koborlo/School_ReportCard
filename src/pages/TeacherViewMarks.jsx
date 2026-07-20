@@ -1,8 +1,9 @@
 // src/pages/TeacherViewMarks.jsx
 import { useState, useEffect } from "react";
+import toast from "react-hot-toast";
 import AppShell from "../components/shared/AppShell";
 import { useAuth } from "../hooks/useAuth";
-import { getActiveTerm, getStudents, getMarks } from "../utils/db";
+import { getActiveTerm, getStudents, getMarks, deleteAllStudents } from "../utils/db";
 import { DEFAULT_SUBJECTS, calcWeightedTotal, calcGrade, GRADE_SCALE } from "../utils/constants";
 
 const CLS_LABEL = { B7:"Basic 7", B8:"Basic 8", B9:"Basic 9" };
@@ -22,6 +23,34 @@ export default function TeacherViewMarks() {
   const [students,setStudents]= useState([]);
   const [marks,   setMarks]   = useState({});
   const [loading, setLoading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDeleteAll = async () => {
+    if (!term || !selCls) return;
+    
+    const confirmed = window.confirm(
+      `Are you sure you want to delete ALL ${students.length} students from ${CLS_LABEL[selCls]}? This action cannot be undone.`
+    );
+    
+    if (!confirmed) return;
+    
+    setDeleting(true);
+    try {
+      const success = await deleteAllStudents(term.id, selCls);
+      if (success) {
+        setStudents([]);
+        setMarks({});
+        toast.success("All students deleted");
+      } else {
+        toast.error("Failed to delete students");
+      }
+    } catch (err) {
+      console.error("Delete error:", err);
+      toast.error("Error deleting students");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const myClasses  = profile?.classes  || [];
   const mySubjects = (profile?.subjects || [])
@@ -116,6 +145,18 @@ export default function TeacherViewMarks() {
                 {s.code}
               </button>
             ))}
+             
+            {students.length > 0 && (
+              <button
+                className="btn btn-sm btn-danger"
+                onClick={handleDeleteAll}
+                disabled={deleting}
+                style={{ marginLeft: "auto", background: "#B71C1C", color: "#fff", border: "none" }}
+                title="Delete all students in this class"
+              >
+                {deleting ? "Deleting…" : "Delete All Students"}
+              </button>
+            )}
           </div>
 
           {/* Stats */}

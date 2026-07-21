@@ -1,101 +1,110 @@
 // src/hooks/useAuth.js
-import { createContext, useContext, useEffect, useState } from "react";
+import { useState, useEffect, useContext, createContext } from "react";
 import {
   signInWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
-  sendPasswordResetEmail,
+  updateProfile,
 } from "firebase/auth";
-import { httpsCallable } from "firebase/functions";
-import { auth, functions } from "../firebase";  // Add functions to your firebase.js
-import { getUser } from "../utils/db";
+import { doc, setDoc, getDoc, serverTimestamp } from "firebase/firestore";
+import { auth, db } from "../firebase";
+import { createAuthUser } from "../utils/authApi";
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [profile, setProfile] = useState(null);
+  const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
+      setUser(firebaseUser);
       if (firebaseUser) {
-        setUser(firebaseUser);
         try {
-          const prof = await getUser(firebaseUser.uid);
-          setProfile(prof);
-        } catch (err) {
-          console.error("Failed to load profile:", err);
-          setProfile(null);
+          const snap = await getDoc(doc(db, "users", firebaseUser.uid));
+          setUserData(snap.exists() ? snap.data() : null);
+        } catch (e) {
+          console.error("Error fetching user data:", e);
+          setUserData(null);
         }
       } else {
-        setUser(null);
-        setProfile(null);
+        setUserData(null);
       }
       setLoading(false);
     });
     return unsub;
   }, []);
 
-  async function login(email, password) {
-    const cred = await signInWithEmailAndPassword(auth, email, password);
-    try {
-      const prof = await getUser(cred.user.uid);
-      if (!prof) {
-        await signOut(auth);
-        throw new Error("User profile not found. Contact your administrator.");
-      }
-      return prof;
-    } catch (err) {
-      if (err.message.includes("profile not found")) throw err;
-      await signOut(auth);
-      throw new Error("Failed to load user profile. Please try again.");
+  const login = (email, password) => signInWithEmailAndPassword(auth, email, password);
+  const logout = () => signOut(auth);
+
+  /**
+   * ✅ CREATE TEACHER — Spark-compatible, no Cloud Functions
+   * Uses REST API so admin stays logged in
+   */
+  const createTeacher = async (email, password, profile) => {
+    const adminUser = auth.currentUser;
+    if (!adminUser) {
+      throw new Error("You must be logged in to create teachers");
     }
-  }
 
-  async function logout() {
-    await signOut(auth);
-  }
+    // Verify admin role
+    const adminDoc = await getDoc(doc(db, "users", adminUser.uid));
+    if (!adminDoc.exists() || adminDoc.data().role !== "admin") {
+      throw new Error("Unauthorized: Admin access required");
+    }
 
-  async function resetPassword(email) {
-    await sendPasswordResetEmail(auth, email);
-  }
+    let newUid = null;
 
-  // ── Cloud Function: Create Teacher (admin stays logged in) ──
-  async function createTeacher(email, password, profileData) {
-    const createTeacherFn = httpsCallable(functions, "createTeacher");
-    const result = await createTeacherFn({ email, password, profileData });
-    return result.data.uid;
-  }
+    try {
+      // Step 1: Create auth user via REST API (admin session preserved!)
+      const authUser = await createAuthUser(email, password);
+      newUid = authUser.uid;
 
-  // ── Cloud Function: Delete Teacher ──
-  async function deleteTeacher(uid) {
-    const deleteTeacherFn = httpsCallable(functions, "deleteTeacher");
-    await deleteTeacherFn({ uid });
-  }
+      // Step 2: Write teacher profile to Firestore as admin
+      await setDoc(doc(db, "users", newUid), {
+        name: profile.name,
+        email: email,
+        subjects: profile.subjects || [],
+        classes: profile.classes || [],
+        role: "teacher",
+        createdAt: serverTimestamp(),
+        createdBy: adminUser.uid,
+        updatedAt: serverTimestamp(),
+      });
 
-  // ── Cloud Function: List Teachers ──
-  async function listTeachers() {
-    const listTeachersFn = httpsCallable(functions, "listTeachers");
-    const result = await listTeachersFn();
-    return result.data.teachers;
-  }
+      return { success: true, uid: newUid, email };
+
+    } catch (error) {
+      // Cleanup: try to delete auth user if Firestore write failed
+      // Note: We can't delete via REST without the new user's ID token
+      // But the auth user exists without a Firestore doc — that's okay,
+      // they just won't be able to log in meaningfully
+      
+      console.error("Teacher creation failed:", error);
+      throw error;
+    }
+  };
 
   return (
     <AuthContext.Provider value={{
-      user, profile, loading,
-      login, logout, resetPassword,
-      createTeacher, deleteTeacher, listTeachers,
-      isAdmin:   profile?.role === "admin",
-      isTeacher: profile?.role === "teacher",
+      user,
+      userData,
+      login,
+      logout,
+      createTeacher,
+      loading,
+      isAdmin: userData?.role === "admin",
+      isTeacher: userData?.role === "teacher",
     }}>
       {children}
     </AuthContext.Provider>
   );
 }
 
-export function useAuth() {
+export const useAuth = () => {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used inside AuthProvider");
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
-}
+};

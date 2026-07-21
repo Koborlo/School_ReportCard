@@ -33,10 +33,19 @@ function PrivateRoute({ children, role }) {
   const { user, profile, loading } = useAuth();
   
   if (loading) return <LoadingSpinner />;
+  
+  // Not logged in
   if (!user) return <Navigate to="/login" replace />;
   
-  if (role && profile?.role !== role) {
-    const fallback = profile?.role === 'admin' ? '/admin' : '/teacher';
+  // No profile data yet (edge case: auth exists but Firestore doc missing)
+  if (!profile) {
+    console.warn("User authenticated but no profile found");
+    return <LoadingSpinner />;
+  }
+  
+  // Role mismatch
+  if (role && profile.role !== role) {
+    const fallback = profile.role === 'admin' ? '/admin' : '/teacher';
     return <Navigate to={fallback} replace />;
   }
   

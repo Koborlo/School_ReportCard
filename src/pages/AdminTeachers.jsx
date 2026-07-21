@@ -59,7 +59,6 @@ export default function AdminTeachers() {
 
     try {
       if (editMode) {
-        // Update existing teacher
         await saveUser(editMode, {
           name: form.name,
           subjects: form.subjects,
@@ -71,7 +70,6 @@ export default function AdminTeachers() {
         await loadData();
         resetForm();
       } else {
-        // Create new teacher via REST API (no Cloud Function!)
         const result = await createTeacher(form.email, form.password, {
           name: form.name,
           subjects: form.subjects,
@@ -85,7 +83,6 @@ export default function AdminTeachers() {
     } catch (err) {
       console.error("Teacher operation failed:", err);
 
-      // User-friendly error messages
       let message = err.message || "Something went wrong";
       if (message.includes("EMAIL_EXISTS")) {
         message = "This email is already registered. Try a different one.";

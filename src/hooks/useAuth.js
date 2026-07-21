@@ -4,100 +4,113 @@ import {
   signInWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
-  updateProfile,
 } from "firebase/auth";
-import { doc, setDoc, getDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, serverTimestamp } from "firebase/firestore";
 import { auth, db } from "../firebase";
 import { createAuthUser } from "../utils/authApi";
 
-const AuthContext = createContext(null);
+const AuthContext = createContext({
+  user: null,
+  profile: null,        // ✅ Named "profile" to match AppShell/PrivateRoute
+  loading: true,
+  login: () => {},
+  logout: () => {},
+  createTeacher: () => {},
+  isAdmin: false,
+  isTeacher: false,
+});
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [userData, setUserData] = useState(null);
+  const [profile, setProfile] = useState(null);  // ✅ Named "profile"
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
+
       if (firebaseUser) {
         try {
           const snap = await getDoc(doc(db, "users", firebaseUser.uid));
-          setUserData(snap.exists() ? snap.data() : null);
+          if (snap.exists()) {
+            setProfile(snap.data());
+          } else {
+            console.warn("No user document found for:", firebaseUser.uid);
+            setProfile(null);
+          }
         } catch (e) {
           console.error("Error fetching user data:", e);
-          setUserData(null);
+          setProfile(null);
         }
       } else {
-        setUserData(null);
+        setProfile(null);
       }
+
       setLoading(false);
     });
+
     return unsub;
   }, []);
 
-  const login = (email, password) => signInWithEmailAndPassword(auth, email, password);
-  const logout = () => signOut(auth);
+  const login = async (email, password) => {
+    return signInWithEmailAndPassword(auth, email, password);
+  };
 
-  /**
-   * ✅ CREATE TEACHER — Spark-compatible, no Cloud Functions
-   * Uses REST API so admin stays logged in
-   */
-  const createTeacher = async (email, password, profile) => {
+  const logout = async () => {
+    await signOut(auth);
+    setProfile(null);
+  };
+
+  const createTeacher = async (email, password, teacherProfile) => {
     const adminUser = auth.currentUser;
     if (!adminUser) {
       throw new Error("You must be logged in to create teachers");
     }
 
     // Verify admin role
-    const adminDoc = await getDoc(doc(db, "users", adminUser.uid));
+    let adminDoc;
+    try {
+      adminDoc = await getDoc(doc(db, "users", adminUser.uid));
+    } catch (e) {
+      throw new Error("Failed to verify admin privileges");
+    }
+
     if (!adminDoc.exists() || adminDoc.data().role !== "admin") {
       throw new Error("Unauthorized: Admin access required");
     }
 
-    let newUid = null;
+    // Create auth user via REST API (admin session preserved!)
+    const authUser = await createAuthUser(email, password);
 
-    try {
-      // Step 1: Create auth user via REST API (admin session preserved!)
-      const authUser = await createAuthUser(email, password);
-      newUid = authUser.uid;
+    // Write teacher profile to Firestore
+    await setDoc(doc(db, "users", authUser.uid), {
+      name: teacherProfile.name,
+      email: email,
+      subjects: teacherProfile.subjects || [],
+      classes: teacherProfile.classes || [],
+      role: "teacher",
+      createdAt: serverTimestamp(),
+      createdBy: adminUser.uid,
+      updatedAt: serverTimestamp(),
+    });
 
-      // Step 2: Write teacher profile to Firestore as admin
-      await setDoc(doc(db, "users", newUid), {
-        name: profile.name,
-        email: email,
-        subjects: profile.subjects || [],
-        classes: profile.classes || [],
-        role: "teacher",
-        createdAt: serverTimestamp(),
-        createdBy: adminUser.uid,
-        updatedAt: serverTimestamp(),
-      });
+    return { success: true, uid: authUser.uid, email };
+  };
 
-      return { success: true, uid: newUid, email };
-
-    } catch (error) {
-      // Cleanup: try to delete auth user if Firestore write failed
-      // Note: We can't delete via REST without the new user's ID token
-      // But the auth user exists without a Firestore doc — that's okay,
-      // they just won't be able to log in meaningfully
-      
-      console.error("Teacher creation failed:", error);
-      throw error;
-    }
+  const value = {
+    user,
+    profile,              // ✅ Matches AppShell.jsx expectation
+    login,
+    logout,
+    createTeacher,
+    loading,
+    isAdmin: profile?.role === "admin",      // ✅ Matches AppShell.jsx
+    isTeacher: profile?.role === "teacher",
+    isAuthenticated: !!user,
   };
 
   return (
-    <AuthContext.Provider value={{
-      user,
-      userData,
-      login,
-      logout,
-      createTeacher,
-      loading,
-      isAdmin: userData?.role === "admin",
-      isTeacher: userData?.role === "teacher",
-    }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );
@@ -105,6 +118,8 @@ export function AuthProvider({ children }) {
 
 export const useAuth = () => {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+  if (!ctx) {
+    throw new Error("useAuth must be used within AuthProvider");
+  }
   return ctx;
 };

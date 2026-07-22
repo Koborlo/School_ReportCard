@@ -1,125 +1,102 @@
 // src/hooks/useAuth.js
-import { useState, useEffect, useContext, createContext } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import {
-  signInWithEmailAndPassword,
-  signOut,
-  onAuthStateChanged,
+  signInWithEmailAndPassword, signOut,
+  onAuthStateChanged, sendPasswordResetEmail,
 } from "firebase/auth";
-import { doc, getDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { auth, db } from "../firebase";
 import { createAuthUser } from "../utils/authApi";
 
-const AuthContext = createContext({
-  user: null,
-  profile: null,        // ✅ Named "profile" to match AppShell/PrivateRoute
-  loading: true,
-  login: () => {},
-  logout: () => {},
-  createTeacher: () => {},
-  isAdmin: false,
-  isTeacher: false,
-});
+const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [profile, setProfile] = useState(null);  // ✅ Named "profile"
+  const [user,    setUser]    = useState(null);
+  const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
-      setUser(firebaseUser);
-
       if (firebaseUser) {
+        setUser(firebaseUser);
         try {
           const snap = await getDoc(doc(db, "users", firebaseUser.uid));
-          if (snap.exists()) {
-            setProfile(snap.data());
-          } else {
-            console.warn("No user document found for:", firebaseUser.uid);
-            setProfile(null);
-          }
+          setProfile(snap.exists() ? { uid: firebaseUser.uid, ...snap.data() } : null);
         } catch (e) {
-          console.error("Error fetching user data:", e);
+          console.error("Failed to load profile:", e);
           setProfile(null);
         }
       } else {
+        setUser(null);
         setProfile(null);
       }
-
       setLoading(false);
     });
-
     return unsub;
   }, []);
 
-  const login = async (email, password) => {
-    return signInWithEmailAndPassword(auth, email, password);
-  };
+  async function login(email, password) {
+    const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
+    const snap = await getDoc(doc(db, "users", cred.user.uid));
+    if (!snap.exists()) {
+      await signOut(auth);
+      throw new Error("NO_PROFILE: Account exists but has no Firestore profile. Add a document in Firestore → users → your UID with role: 'admin'.");
+    }
+    return { uid: cred.user.uid, ...snap.data() };
+  }
 
-  const logout = async () => {
-    await signOut(auth);
-    setProfile(null);
-  };
+  async function logout() { await signOut(auth); }
 
-  const createTeacher = async (email, password, teacherProfile) => {
+  async function resetPassword(email) { await sendPasswordResetEmail(auth, email.trim()); }
+
+  async function createTeacher(email, password, teacherProfile) {
     const adminUser = auth.currentUser;
-    if (!adminUser) {
-      throw new Error("You must be logged in to create teachers");
+    if (!adminUser) throw new Error("You must be logged in.");
+
+    // Verify admin
+    const adminSnap = await getDoc(doc(db, "users", adminUser.uid));
+    if (!adminSnap.exists() || adminSnap.data().role !== "admin") {
+      throw new Error("Unauthorized: Admin access required.");
     }
 
-    // Verify admin role
-    let adminDoc;
-    try {
-      adminDoc = await getDoc(doc(db, "users", adminUser.uid));
-    } catch (e) {
-      throw new Error("Failed to verify admin privileges");
-    }
+    // Create Firebase Auth user via REST API (admin stays logged in)
+    const newAuth = await createAuthUser(email, password);
 
-    if (!adminDoc.exists() || adminDoc.data().role !== "admin") {
-      throw new Error("Unauthorized: Admin access required");
-    }
-
-    // Create auth user via REST API (admin session preserved!)
-    const authUser = await createAuthUser(email, password);
-
-    // Write teacher profile to Firestore
-    await setDoc(doc(db, "users", authUser.uid), {
-      name: teacherProfile.name,
-      email: email,
-      subjects: teacherProfile.subjects || [],
-      classes: teacherProfile.classes || [],
-      role: "teacher",
+    // Write Firestore profile
+    await setDoc(doc(db, "users", newAuth.uid), {
+      name:      teacherProfile.name,
+      email:     email.trim().toLowerCase(),
+      subjects:  teacherProfile.subjects || [],
+      classes:   teacherProfile.classes  || [],
+      role:      "teacher",
       createdAt: serverTimestamp(),
       createdBy: adminUser.uid,
       updatedAt: serverTimestamp(),
     });
 
-    return { success: true, uid: authUser.uid, email };
-  };
+    return { success: true, uid: newAuth.uid };
+  }
 
-  const value = {
-    user,
-    profile,              // ✅ Matches AppShell.jsx expectation
-    login,
-    logout,
-    createTeacher,
-    loading,
-    isAdmin: profile?.role === "admin",      // ✅ Matches AppShell.jsx
-    isTeacher: profile?.role === "teacher",
-    isAuthenticated: !!user,
-  };
+  async function updateTeacher(uid, updates) {
+    await setDoc(doc(db, "users", uid), { ...updates, updatedAt: serverTimestamp() }, { merge: true });
+  }
 
   return (
-    <AuthContext.Provider value={value}>
+    <AuthContext.Provider value={{
+      user, profile, loading,
+      login, logout, resetPassword,
+      createTeacher, updateTeacher,
+      isAdmin:         profile?.role === "admin",
+      isTeacher:       profile?.role === "teacher",
+      isAuthenticated: !!user && !!profile,
+    }}>
       {children}
     </AuthContext.Provider>
   );
 }
 
-export const useAuth = () => {
+export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) {
-    throw new Error("useAuth must be used within AuthProvider");
-  }
+  if (!ctx) throw new Error("useAuth must be used inside AuthProvider");
   return ctx;
-};
+}

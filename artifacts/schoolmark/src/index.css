@@ -1,0 +1,4 @@
+/* App styles are loaded via src/styles/global.css imported from App.jsx.
+   This file is kept minimal to avoid Tailwind variable conflicts. */
+
+*, *::before, *::after { box-sizing: border-box; }

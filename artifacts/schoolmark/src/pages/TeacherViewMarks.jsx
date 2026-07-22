@@ -1,9 +1,9 @@
 // src/pages/TeacherViewMarks.jsx
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import toast from "react-hot-toast";
 import AppShell from "../components/shared/AppShell";
 import { useAuth } from "../hooks/useAuth";
-import { getActiveTerm, getStudents, getMarks, deleteAllStudents } from "../utils/db";
+import { getActiveTerm, getStudents, getMarks, deleteAllStudents, getSubjects } from "../utils/db";
 import { DEFAULT_SUBJECTS, calcWeightedTotal, calcGrade, GRADE_SCALE } from "../utils/constants";
 
 const CLS_LABEL = { B7:"Basic 7", B8:"Basic 8", B9:"Basic 9" };
@@ -17,13 +17,22 @@ function ordinal(n) {
 
 export default function TeacherViewMarks() {
   const { profile }       = useAuth();
-  const [term,    setTerm]    = useState(null);
-  const [selCls,  setSelCls]  = useState("");
-  const [selSubj, setSelSubj] = useState("");
-  const [students,setStudents]= useState([]);
-  const [marks,   setMarks]   = useState({});
-  const [loading, setLoading] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [term,       setTerm]      = useState(null);
+  const [selCls,     setSelCls]    = useState("");
+  const [selSubj,    setSelSubj]   = useState("");
+  const [students,   setStudents]  = useState([]);
+  const [marks,      setMarks]     = useState({});
+  const [loading,    setLoading]   = useState(false);
+  const [deleting,   setDeleting]  = useState(false);
+  const [allSubjects,setAllSubjects]= useState(DEFAULT_SUBJECTS);
+
+  // Load the school's subject list from Firestore on mount so custom
+  // subjects (e.g. "COMP") that are not in DEFAULT_SUBJECTS are recognised.
+  useEffect(() => {
+    getSubjects().then(list => {
+      if (list && list.length) setAllSubjects(list);
+    });
+  }, []);
 
   const handleDeleteAll = async () => {
     if (!term || !selCls) return;
@@ -52,16 +61,33 @@ export default function TeacherViewMarks() {
     }
   };
 
-  const myClasses  = profile?.classes  || [];
-  const mySubjects = (profile?.subjects || [])
-    .map(sc => DEFAULT_SUBJECTS.find(s => s.code === sc))
-    .filter(Boolean);
+  // Stable memoised arrays — avoids firing the init effect on every render.
+  const myClasses = useMemo(
+    () => profile?.classes || [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [JSON.stringify(profile?.classes)]
+  );
+
+  const mySubjects = useMemo(
+    () => (profile?.subjects || []).map(sc => {
+      // Look up in the school's full subject list first, then the default list,
+      // and finally fall back to displaying the raw code so custom subjects
+      // (e.g. "COMP") are never silently dropped.
+      return (
+        allSubjects.find(s => s.code === sc) ||
+        DEFAULT_SUBJECTS.find(s => s.code === sc) ||
+        { code: sc, name: sc }
+      );
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [JSON.stringify(profile?.subjects), allSubjects]
+  );
 
   useEffect(() => {
     getActiveTerm().then(t => {
       setTerm(t);
-      if (myClasses[0])        setSelCls(myClasses[0]);
-      if (mySubjects[0])       setSelSubj(mySubjects[0].code);
+      if (myClasses[0])  setSelCls(myClasses[0]);
+      if (mySubjects[0]) setSelSubj(mySubjects[0].code);
     });
   }, [myClasses, mySubjects]);
 

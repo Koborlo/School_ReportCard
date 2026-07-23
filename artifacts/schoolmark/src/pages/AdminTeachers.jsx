@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import toast from "react-hot-toast";
 import AppShell from "../components/shared/AppShell";
 import { useAuth } from "../hooks/useAuth";
-import { getAllTeachers, saveUser, deleteUser, getSubjects } from "../utils/db";
+import { getAllTeachers, saveUser, deleteUser, getSubjects, saveDeletedAuth } from "../utils/db";
 import { CLASSES, DEFAULT_SUBJECTS } from "../utils/constants";
 
 export default function AdminTeachers() {
@@ -49,12 +49,19 @@ export default function AdminTeachers() {
         toast.success(`${form.name} updated successfully!`);
       } else {
         // Create — uses REST API so admin stays logged in
-        await createTeacher(form.email.trim(), form.password, {
+        const result = await createTeacher(form.email.trim(), form.password, {
           name:     form.name.trim(),
           subjects: form.subjects,
           classes:  form.classes,
         });
-        toast.success(`Teacher ${form.name} created successfully!`);
+        if (result.passwordReset) {
+          toast.success(
+            `${form.name} re-added. A password reset link has been sent to their email — they must use it to set a new password before logging in.`,
+            { duration: 8000 }
+          );
+        } else {
+          toast.success(`Teacher ${form.name} created successfully!`);
+        }
       }
       const updated = await getAllTeachers();
       setTeachers(updated.filter(u => u.role === "teacher"));
@@ -67,8 +74,11 @@ export default function AdminTeachers() {
   }
 
   async function handleDelete(uid, name) {
-    if (!window.confirm(`Remove ${name}? This removes their profile but NOT their login account.`)) return;
+    if (!window.confirm(`Remove ${name}? This will remove their profile. If you re-add them later with the same email, a password reset link will be sent automatically.`)) return;
     try {
+      const teacher = teachers.find(t => t.uid === uid);
+      // Save tombstone so the email can be safely reused later
+      if (teacher?.email) await saveDeletedAuth(uid, teacher.email);
       await deleteUser(uid);
       setTeachers(t => t.filter(x => x.uid !== uid));
       toast.success(`${name} removed`);

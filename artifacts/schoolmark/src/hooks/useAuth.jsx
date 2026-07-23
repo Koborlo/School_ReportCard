@@ -7,6 +7,7 @@ import {
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { auth, db } from "../firebase";
 import { createAuthUser } from "../utils/authApi";
+import { getDeletedAuth, removeDeletedAuth } from "../utils/db";
 
 const AuthContext = createContext(null);
 
@@ -59,13 +60,39 @@ export function AuthProvider({ children }) {
       throw new Error("Unauthorized: Admin access required.");
     }
 
-    // Create Firebase Auth user via REST API (admin stays logged in)
-    const newAuth = await createAuthUser(email, password);
+    const normalizedEmail = email.trim().toLowerCase();
 
-    // Write Firestore profile
-    await setDoc(doc(db, "users", newAuth.uid), {
+    let uid;
+    let passwordReset = false;
+
+    try {
+      // Try to create a brand-new Firebase Auth account
+      const newAuth = await createAuthUser(normalizedEmail, password);
+      uid = newAuth.uid;
+    } catch (err) {
+      // EMAIL_EXISTS — check whether this is a previously-deleted teacher's
+      // zombie Auth account (profile deleted but Auth account still alive).
+      if (!err.message.includes("already registered")) throw err;
+
+      const tombstone = await getDeletedAuth(normalizedEmail);
+      if (!tombstone) {
+        // Genuinely taken by a different active account
+        throw new Error("This email is already in use by another account.");
+      }
+
+      // Reuse the existing Auth UID; the teacher will reset their password
+      uid = tombstone.uid;
+      passwordReset = true;
+      await removeDeletedAuth(normalizedEmail);
+
+      // Send a password-reset email so the teacher can set the new password
+      await sendPasswordResetEmail(auth, normalizedEmail);
+    }
+
+    // Write (or overwrite) the Firestore profile
+    await setDoc(doc(db, "users", uid), {
       name:      teacherProfile.name,
-      email:     email.trim().toLowerCase(),
+      email:     normalizedEmail,
       subjects:  teacherProfile.subjects || [],
       classes:   teacherProfile.classes  || [],
       role:      "teacher",
@@ -74,7 +101,7 @@ export function AuthProvider({ children }) {
       updatedAt: serverTimestamp(),
     });
 
-    return { success: true, uid: newAuth.uid };
+    return { success: true, uid, passwordReset };
   }
 
   async function updateTeacher(uid, updates) {

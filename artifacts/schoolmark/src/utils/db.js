@@ -25,6 +25,21 @@ export async function saveUser(uid,data){await setDoc(doc(db,"users",uid),{...da
 export async function getAllTeachers(){try{const s=await getDocs(collection(db,"users"));return s.docs.map(d=>({uid:d.id,...d.data()}));}catch(e){return[];}}
 export async function deleteUser(uid){await deleteDoc(doc(db,"users",uid));}
 
+// Tombstone helpers — preserve the UID→email mapping when a teacher is deleted
+// so the same email can be safely reused without creating a duplicate Auth account.
+function deletedAuthKey(email){ return email.toLowerCase().replace(/[.@+]/g,"_"); }
+export async function saveDeletedAuth(uid,email){
+  await setDoc(doc(db,"deleted_auths",deletedAuthKey(email)),
+    {uid,email:email.toLowerCase(),deletedAt:serverTimestamp()});
+}
+export async function getDeletedAuth(email){
+  try{const s=await getDoc(doc(db,"deleted_auths",deletedAuthKey(email)));
+  return s.exists()?s.data():null;}catch(e){return null;}
+}
+export async function removeDeletedAuth(email){
+  await deleteDoc(doc(db,"deleted_auths",deletedAuthKey(email)));
+}
+
 export async function getTerms(){
   try{const s=await getDocs(collection(db,"terms"));
   return s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));}
